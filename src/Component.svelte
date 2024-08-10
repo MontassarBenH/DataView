@@ -10,6 +10,39 @@
   const { styleable, API } = getContext("sdk");
   const component = getContext("component");
 
+  const loadJourneysAndParseData = async () => {
+  try {
+    console.log("Data Table Object:", dataTable);
+    const tableId = typeof dataTable.tableId === 'object' ? dataTable.tableId.id : dataTable.tableId;
+    console.log("Table ID (processed):", tableId);
+
+    if (!tableId) {
+      throw new Error("Invalid table ID");
+    }
+
+    const res = await API.getTable(tableId);
+    console.log("API Response:", JSON.stringify(res, null, 2));
+
+    if (res?.data) {
+      journeyData = res.data.rows || res.data;
+      console.log("Journeys loaded:", journeyData);
+    } else if (res?.rows) {
+      journeyData = res.rows;
+      console.log("Journeys loaded:", journeyData);
+    } else {
+      journeyData = [];
+      error = "No journeys found in the database.";
+    }
+  } catch (err) {
+    console.error('Failed to load journeys:', err);
+    error = `Error: ${err.message}`;
+  } finally {
+    loading = false;
+  }
+};
+
+
+
 
   /*const loadJourneys = async () => {
   try {
@@ -50,7 +83,7 @@
   }
 };*/
 
-  const loadJourneysWithGetTable = async () => {
+  /*const loadJourneysWithGetTable = async () => {
   try {
     console.log("Data Table Object:", dataTable);
     console.log("Table ID (raw):", dataTable.tableId);
@@ -87,7 +120,7 @@
   } finally {
     loading = false;
   }
-};
+};*/
 
 
 /*const loadJourneysWithSearchTable = async () => {
@@ -170,7 +203,7 @@
 
 
   onMount(async () => {
-    await loadJourneysWithGetTable();
+    await loadJourneysAndParseData();
   });
 </script>
 
