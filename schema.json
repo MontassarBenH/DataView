@@ -1,0 +1,17 @@
+{
+  "type": "component",
+  "metadata": {},
+  "schema": {
+    "name": "DataView",
+    "friendlyName": "DataView",
+    "description": "View data from table",
+    "icon": "Text",
+    "settings": [
+      {
+        "type": "table",
+        "key": "dataTable",
+        "label": "Data Table"
+      }
+    ]
+  }
+}
