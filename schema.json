@@ -9,8 +9,38 @@
     "settings": [
       {
         "type": "table",
-        "key": "dataTable",
-        "label": "Data Table"
+        "key": "dataTablejourney",
+        "label": "Data Table journey"
+      },
+      {
+        "type": "table",
+        "key": "dataTablejourneyitems",
+        "label": "Data Table journey items"
+      },
+      {
+        "type": "boolean",
+        "key": "journeyHide",
+        "label": "Hide Journey Table"
+      },
+      {
+        "type": "boolean",
+        "key": "journeyitemsHide",
+        "label": "Hide Journey Items Table"
+      },
+      {
+        "type": "event",
+        "key": "clickAction",
+        "label": "Click Action",
+        "context": [
+          {
+            "label": "ID",
+            "key": "id"
+          },
+          {
+            "label": "Internal ID",
+            "key": "_id"
+          }
+        ]
       }
     ]
   }
