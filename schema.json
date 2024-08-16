@@ -29,13 +29,10 @@
       },
       {
         "type": "event",
-        "key": "clickAction",
-        "label": "Click Action",
+        "key": "Deleterow",
+        "label": "Delete Action",
         "context": [
-          {
-            "label": "ID",
-            "key": "id"
-          },
+        
           {
             "label": "Internal ID",
             "key": "_id"
