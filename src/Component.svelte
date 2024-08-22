@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { createEventDispatcher } from 'svelte';
   import { derived, writable } from 'svelte/store';
+  import { tick } from 'svelte';
 
 
 
@@ -12,7 +13,6 @@
   export let journeyHide;
 
   let journeyData = [];
-  let allJourneyItems = [];
 
   let editingJourneyItemId = null;
   let error = null;
@@ -33,11 +33,17 @@
   let currentEditingJourney = null;
   let creatingNewJourney = false;
 
+
+  const journeyDataStore = writable([]);
+  const allJourneyItemsStore = writable([]);
+
+  let allJourneyItems;
+  allJourneyItemsStore.subscribe(value => {
+    allJourneyItems = value;
+  });
   
 
 
-
-  const journeyDataStore = writable([]);
 
   const { styleable, API } = getContext("sdk");
   const component = getContext("component");
@@ -47,6 +53,8 @@
     journeyDataStore.set([...journeyData]);
     allJourneyItems = [...allJourneyItems];
 };
+
+
 
 
   // New Item Template
@@ -133,39 +141,40 @@
   }
 };
 
-  const loadJourneyItems = async () => {
-    try {
-      const tableId = typeof dataTablejourneyitems.tableId === 'object' ? dataTablejourneyitems.tableId.id : dataTablejourneyitems.tableId;
-      
-      if (!tableId) {
-        throw new Error("Invalid journey items table ID");
-      }
-      
-      const res = await API.searchTable({
-        tableId: tableId,
-        query: {
-          greater: {
-            id: 0
-          }
-        },
-        paginate: false,
-        limit: 100
-      });
-      
-      if (res && Array.isArray(res.rows)) {
-      allJourneyItems = res.rows.map(item => ({
+const loadJourneyItems = async () => {
+  try {
+    const tableId = typeof dataTablejourneyitems.tableId === 'object' ? dataTablejourneyitems.tableId.id : dataTablejourneyitems.tableId;
+    
+    if (!tableId) {
+      throw new Error("Invalid journey items table ID");
+    }
+    
+    const res = await API.searchTable({
+      tableId: tableId,
+      query: {
+        greater: {
+          id: 0
+        }
+      },
+      paginate: false,
+      limit: 100
+    });
+    
+    if (res && Array.isArray(res.rows)) {
+      const updatedItems = res.rows.map(item => ({
         ...item,
         ranking: item.ranking !== undefined ? Number(item.ranking) : null
       }));
+      allJourneyItemsStore.set(updatedItems);  
     } else {
-        allJourneyItems = [];
-        error = "Invalid response format from API for journey items.";
-      }
-    } catch (err) {
-      console.error('Failed to load journey items:', err);
-      error = `Error: ${err.message}`;
+      allJourneyItemsStore.set([]);  
+      error = "Invalid response format from API for journey items.";
     }
-  };
+  } catch (err) {
+    console.error('Failed to load journey items:', err);
+    error = `Error: ${err.message}`;
+  }
+};
 
     // Journey CRUD Functions
 
@@ -478,17 +487,22 @@ const saveJourneyItem = async (item) => {
         if (itemDeleteResult) {
           showSuccess("Journey item deleted successfully.");
 
+          await reloadData();
+          await tick();
+
           // Update local data
-          allJourneyItems = allJourneyItems.filter(i => i.id !== item.id);
-
-        // Update the journeyData
         journeyData = journeyData.map(journey => ({
-                    ...journey,
-                    journey_item: journey.journey_item.filter(i => i.id !== item.id)
-                }));
+          ...journey,
+          journey_item: journey.journey_item.filter(i => i.id !== item.id)
+        }));
 
-          // Force a re-render
-          refreshDisplay();
+        allJourneyItemsStore.update(items => items.filter(i => i.id !== item.id));
+
+        // Force a re-render
+        refreshDisplay();
+
+        // Use tick again to ensure the display has updated
+        await tick();
 
           closeDeleteConfirmitem();
         } else {
