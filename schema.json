@@ -23,11 +23,6 @@
         "label": "Hide Journey Table"
       },
       {
-        "type": "boolean",
-        "key": "journeyitemsHide",
-        "label": "Hide Journey Items Table"
-      },
-      {
         "type": "event",
         "key": "Deleterow",
         "label": "Delete Action",

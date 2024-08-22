@@ -1,7 +1,6 @@
 <script>
   import { getContext } from "svelte";
   import { onMount } from 'svelte';
-  import { tick } from 'svelte';
   import { createEventDispatcher } from 'svelte';
   import { derived, writable } from 'svelte/store';
 
@@ -10,7 +9,6 @@
 
   export let dataTablejourney;
   export let dataTablejourneyitems;
-  //export let Deleterow;
   export let journeyHide;
 
   let journeyData = [];
@@ -19,6 +17,8 @@
   let editingJourneyItemId = null;
   let error = null;
   let loading = true;
+  let showSuccessModal = false;
+  let successMessage = '';
   let message = null;
   let mounted = false;
   let showDeleteConfirm = false;
@@ -38,14 +38,14 @@
 
 
   const journeyDataStore = writable([]);
+
   const { styleable, API } = getContext("sdk");
   const component = getContext("component");
   const dispatch = createEventDispatcher();
 
-  const refreshDisplay = () => {
-  journeyData = [...journeyData];
-  allJourneyItems = [...allJourneyItems];
-  journeyDataStore.set(journeyData);
+ const refreshDisplay = () => {
+    journeyDataStore.set([...journeyData]);
+    allJourneyItems = [...allJourneyItems];
 };
 
 
@@ -56,6 +56,20 @@
     media: '',
     ranking: null,
     journey_id: null
+  };
+
+  const showSuccess = (message) => {
+  // Set a small delay to ensure other operations complete first
+  setTimeout(() => {
+    successMessage = message;
+    showSuccessModal = true;
+  }, 100);
+};
+
+  const closeSuccessModal = async () => {
+    showSuccessModal = false;
+    await reloadData();
+    refreshDisplay();
   };
 
   const loadAllData = async () => {
@@ -72,17 +86,30 @@
     }
   };
 
-  const loadJourneys = async () => {
-    try {
-      // Retrieve the tableId from dataTablejourney object. 
+  const loadJourneys = async (journeyId = null) => {
+  try {
+    // Retrieve the tableId from dataTablejourney object.
     // If dataTablejourney.tableId is an object, extract its 'id' property; otherwise, use it directly.
-      const tableId = typeof dataTablejourney.tableId === 'object' ? dataTablejourney.tableId.id : dataTablejourney.tableId;
-      
-      if (!tableId) {
-        throw new Error("Invalid journey table ID");
-      }
-      
-      const res = await API.searchTable({
+    const tableId = typeof dataTablejourney.tableId === 'object' ? dataTablejourney.tableId.id : dataTablejourney.tableId;
+
+    if (!tableId) {
+      throw new Error("Invalid journey table ID");
+    }
+
+    let res;
+    if (journeyId) {
+      res = await API.searchTable({
+        tableId: tableId,
+        query: {
+          equal: {
+            id: journeyId
+          }
+        },
+        paginate: false,
+        limit: 1
+      });
+    } else {
+      res = await API.searchTable({
         tableId: tableId,
         query: {
           greater: {
@@ -92,45 +119,19 @@
         paginate: false,
         limit: 100
       });
-      
-      if (res && Array.isArray(res.rows)) {
-      // Map the response rows to create the journeyData array.
-      // For each journey in the array:
-      journeyData = res.rows.map(journey => ({
-            // Spread the journey object to retain its original properties.
-        ...journey,
-            // If journey.journey_item exists, map each item to merge additional data.
-        journey_item: journey.journey_item ? journey.journey_item.map(item => {
-            // Find the corresponding full item from the allJourneyItems array based on '_id'.
-          const fullItem = allJourneyItems.find(ji => ji._id === item._id);
-          return {
-            ...fullItem,
-            ...item,
-              // Set the ranking property from the fullItem. Convert to a number if it exists.
-            ranking: fullItem && fullItem.ranking !== undefined ? Number(fullItem.ranking) : null
-          };
-        }) : [],
-              // Create a list of selected journey item IDs from the journey_item array.
-        selectedJourneyItems: journey.journey_item ? journey.journey_item.map(item => item._id) : []
-      }));
-
-      // After mapping, sort each journey's items by their ranking using the sortByRanking function.
-      journeyData.forEach(journey => {
-        journey.journey_item.sort(sortByRanking);
-      });
-
-      
-      } else {
-        journeyData = [];
-        error = "Invalid response format from API for journeys.";
-      }
-
-
-    } catch (err) {
-      console.error('Failed to load journeys:', err);
-      error = `Error: ${err.message}`;
     }
-  };
+
+    if (res && Array.isArray(res.rows)) {
+      journeyData = res.rows;
+    } else {
+      journeyData = [];
+      error = "Invalid response format from API for journeys.";
+    }
+  } catch (err) {
+    console.error('Failed to load journeys:', err);
+    error = `Error: ${err.message}`;
+  }
+};
 
   const loadJourneyItems = async () => {
     try {
@@ -218,11 +219,15 @@ const saveJourney = async () => {
 
     const updatedItems = await Promise.all(itemUpdatePromises);
 
-    message = "Journey and all items updated successfully.";
-    cancelEditing();
+    showSuccess("Journey and all items updated successfully.");
+
+    // Maintain the editing state
+    editingId = journeyResult.id;
+    currentEditingJourney = { ...currentEditingJourney, id: journeyResult.id };
+    
 
     // Reload data
-    await reloadData();
+    await reloadData(editingId);
     refreshDisplay();
 
     return true;
@@ -318,7 +323,7 @@ const deleteJourney = async (journey) => {
       console.log(`Delete result for journey ${journey.id}:`, journeyDeleteResult);
 
       if (journeyDeleteResult) {
-        message = "Journey and all related items deleted successfully.";
+        showSuccess("Journey and all related items deleted successfully.");
         
         // 4. Update local data
         journeyData = journeyData.filter(j => j.id !== journey.id);
@@ -351,13 +356,31 @@ const startEditing = async (journeyId) => {
   if (journey) {
     // Create a deep copy to avoid unintended mutations
     currentEditingJourney = JSON.parse(JSON.stringify(journey));
-    // Ensure journey_item is an array
-    currentEditingJourney.journey_item = currentEditingJourney.journey_item || [];
-    // Fetch full journey item details
-    currentEditingJourney.journey_item = await Promise.all(currentEditingJourney.journey_item.map(async (item) => {
-      const fullItem = allJourneyItems.find(ji => ji.id === item._id);
-      return fullItem ? { ...fullItem, ...item } : item;
-    }));
+
+    // Fetch full journey item details and update the currentEditingJourney.journey_item
+    const itemsTableId = typeof dataTablejourneyitems.tableId === 'object' ? dataTablejourneyitems.tableId.id : dataTablejourneyitems.tableId;
+    const res = await API.searchTable({
+      tableId: itemsTableId,
+      query: {
+        equal: {
+          journey_id: journeyId
+        }
+      },
+      paginate: false,
+      limit: 1000
+    });
+
+    if (res && Array.isArray(res.rows)) {
+      currentEditingJourney.journey_item = res.rows.map(item => ({
+        ...item,
+        ranking: Number(item.ranking) || 0
+      }));
+    } else {
+      currentEditingJourney.journey_item = [];
+    }
+
+    // Sort the journey items by ranking
+    currentEditingJourney.journey_item.sort(sortByRankingAscending);
   }
 };
 
@@ -409,7 +432,7 @@ const saveJourneyItem = async (item) => {
       ...preparedItem
     });
 
-    message = "Journey item updated successfully.";
+    showSuccess("Journey item updated successfully.");
     editingJourneyItemId = null;
 
     // Update the item in currentEditingJourney
@@ -429,70 +452,82 @@ const saveJourneyItem = async (item) => {
   }
 };
 
-const deleteJourneyItem = async (item) => {
-  console.log("Attempting to delete journey item:", JSON.stringify(item, null, 2));
-  try {
-    loading = true;
-    error = null;
-    message = null;
 
-    if (!item || !item.id) {
-      throw new Error("Invalid journey item object");
-    }
 
-    const itemsTableId = typeof dataTablejourneyitems.tableId === 'object' ? dataTablejourneyitems.tableId.id : dataTablejourneyitems.tableId;
-
-    console.log(`Deleting journey item: ${item.id}`);
+  const deleteJourneyItem = async (item) => {
     try {
-      const itemDeleteResult = await API.deleteRow({
-        tableId: itemsTableId,
-        rowId: item.id
-      });
+      loading = true;
+      error = null;
+      message = null;
 
-      console.log(`Delete result for item ${item.id}:`, itemDeleteResult);
-
-      if (itemDeleteResult) {
-        message = "Journey item deleted successfully.";
-        
-        // Update local data
-        allJourneyItems = allJourneyItems.filter(i => i.id !== item.id);
-        
-        // Update the journey data to remove the deleted item
-        journeyData = journeyData.map(journey => ({
-          ...journey,
-          journey_item: journey.journey_item.filter(i => i._id !== item.id)
-        }));
-
-        closeDeleteConfirm();
-        // Force a re-render
-        refreshDisplay();
-
-      } else {
-        throw new Error("Failed to delete journey item");
+      if (!item || !item.id) {
+        throw new Error("Invalid journey item object");
       }
-    } catch (itemError) {
-      console.error(`Error deleting journey item ${item.id}:`, itemError);
-      throw itemError;
+
+      const itemsTableId = typeof dataTablejourneyitems.tableId === 'object' ? dataTablejourneyitems.tableId.id : dataTablejourneyitems.tableId;
+
+      console.log(`Deleting journey item: ${item.id}`);
+      try {
+        const itemDeleteResult = await API.deleteRow({
+          tableId: itemsTableId,
+          rowId: item.id
+        });
+
+        console.log(`Delete result for item ${item.id}:`, itemDeleteResult);
+
+        if (itemDeleteResult) {
+          showSuccess("Journey item deleted successfully.");
+
+          // Update local data
+          allJourneyItems = allJourneyItems.filter(i => i.id !== item.id);
+
+        // Update the journeyData
+        journeyData = journeyData.map(journey => ({
+                    ...journey,
+                    journey_item: journey.journey_item.filter(i => i.id !== item.id)
+                }));
+
+          // Force a re-render
+          refreshDisplay();
+
+          closeDeleteConfirmitem();
+        } else {
+          throw new Error("Failed to delete journey item");
+        }
+      } catch (itemError) {
+        console.error(`Error deleting journey item ${item.id}:`, itemError);
+        if (itemError.response && itemError.response.status === 403) {
+          error = "You are not authorized to delete this journey item.";
+        } else {
+          error = `Error deleting journey item: ${itemError.message}`;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to delete journey item:', err);
+      error = `Error deleting journey item: ${err.message}`;
+      if (err.response) {
+        console.error('Error response:', err.response);
+      }
+    } finally {
+      loading = false;
     }
-  } catch (err) {
-    console.error('Failed to delete journey item:', err);
-    error = `Error deleting journey item: ${err.message}`;
-    if (err.response) {
-      console.error('Error response:', err.response);
-    }
-  } finally {
-    loading = false;
-  }
 };
 
 
   // Utility Functions
+
 
   const sortByRanking = (a, b) => {
   const rankingA = a.ranking !== undefined ? Number(a.ranking) : Infinity;
   const rankingB = b.ranking !== undefined ? Number(b.ranking) : Infinity;
   return rankingB - rankingA;
 };
+
+  const sortByRankingAscending = (a, b) => {
+    const rankingA = a.ranking !== undefined ? Number(a.ranking) : Infinity;
+    const rankingB = b.ranking !== undefined ? Number(b.ranking) : Infinity;
+    return rankingA - rankingB;
+  };
 
 
 function getVideoThumbnail(url) {
@@ -571,7 +606,7 @@ const closeDeleteConfirmitem = () => {
       ...newJourneyItem
     });
 
-    message = "New journey item added successfully.";
+    showSuccess("New journey item added successfully.");
     closeNewItemOverlay();
 
     // Add the new item to currentEditingJourney
@@ -610,27 +645,31 @@ onMount(() => {
   });
 
 
-    $: displayedJourneys = derived(journeyDataStore,$journeyData => filterJourneys($journeyData, journeyFilter).sort((a, b) => sortById(a, b, journeySortOrder)));
-    $: displayedJourneysItems = filterJourneys(allJourneyItems, journeyItemFilter).sort(sortJourneyItemsByRanking);
-    $: displayedJourneyItems = allJourneyItems.length > 0 
-    ? filterJourneyItems(allJourneyItems, journeyItemFilter).sort(sortByRanking) 
-    : [];
+      $: displayedJourneys = derived(journeyDataStore, $journeyData =>
+      filterJourneys($journeyData, journeyFilter).sort((a, b) => sortById(a, b, journeySortOrder))
+    );
+
+    
+        $: displayedJourneyItems = derived(journeyDataStore, $journeyData =>
+      filterJourneys($journeyData.flatMap(j => j.journey_item), journeyItemFilter).sort(sortJourneyItemsByRanking)
+    );
+
     $: sortedJourneyData = journeyData.map(journey => ({
-        ...journey,
-        journey_item: (journey.journey_item || []).map(item => ({
-          ...item,
-          ranking: Number(item.ranking) || 0
-        })).sort(sortByRanking)
-      }));
+      ...journey,
+      journey_item: (journey.journey_item || []).map(item => ({
+        ...item,
+        ranking: Number(item.ranking) || 0
+      })).sort(sortByRankingAscending)
+    }));
 
 
-      journeyData = journeyData.map(journey => ({
-            ...journey,
-            journey_item: journey.journey_item ? journey.journey_item.map((item, index) => ({
-              ...item,
-              ranking: Number(item.ranking) || index + 1
-            })).sort(sortByRanking) : []
-          }));
+        journeyData = journeyData.map(journey => ({
+      ...journey,
+      journey_item: journey.journey_item ? journey.journey_item.map((item, index) => ({
+        ...item,
+        ranking: Number(item.ranking) || index + 1
+      })).sort(sortByRankingAscending) : []
+    }));
 
 
 
@@ -641,13 +680,19 @@ onMount(() => {
 
 
 
-const reloadData = async () => {
+  const reloadData = async (journeyId = null) => {
   loading = true;
+  error = null;
   try {
-    await loadJourneys();
+    if (journeyId) {
+      // Load only the current editing journey
+      await loadJourneys(journeyId);
+    } else {
+      // Load all journeys
+      await loadJourneys();
+    }
     await loadJourneyItems();
     refreshDisplay();
-
   } catch (err) {
     console.error('Error reloading data:', err);
     error = `Error reloading data: ${err.message}`;
@@ -683,7 +728,7 @@ const reloadData = async () => {
           <button class="spectrum-Button spectrum-Button--sizeM spectrum-Button--primary gap-M svelte-4lnozm c0c157ac533e94fe7a15900bd7e58318a-dom" on:click={addNewJourneyItem}>Add New Item</button>
          
         <ul class="journey-items-list">
-          {#each currentEditingJourney.journey_item.sort(sortByRanking) as item (item.id || item.ranking)}
+          {#each currentEditingJourney.journey_item.sort(sortByRankingAscending) as item (item.id || item.ranking)}
           <li class="journey-item">
               <div class="journey-item-container">
                 <div class="journey-item-media">
@@ -704,7 +749,7 @@ const reloadData = async () => {
                   {/if}
                   <input type="number" bind:value={item.ranking} placeholder="Ranking" class="edit-input" min="0" step="1" />
                   <div class="journey-item-actions">
-                    <button class="spectrum-Button spectrum-Button--sizeM spectrum-Button--cta gap-M svelte-4lnozm c454061e78c2a4775a343d673e7a8fb04-TdiW38gAi8-dom" on:click={() => openDeleteConfirmitem(item)}>Delete</button>
+                    <button class="spectrum-Button spectrum-Button--warning spectrum-Button--sizeM" on:click={() => openDeleteConfirmitem(item)}>Delete</button>
                   </div>
                 </div>
               </div>
@@ -714,16 +759,13 @@ const reloadData = async () => {
 
         <div class="journey-actions">
           <button class="spectrum-Button spectrum-Button--sizeM spectrum-Button--primary gap-M svelte-4lnozm c0c157ac533e94fe7a15900bd7e58318a-dom" on:click={saveJourney}>Save Journey</button>
-          <button class="spectrum-Button spectrum-Button--sizeM spectrum-Button--primary gap-M svelte-4lnozm c0c157ac533e94fe7a15900bd7e58318a-dom" on:click={cancelEditing}>Cancel</button>
+          <button class="spectrum-Button spectrum-Button--sizeM spectrum-Button--primary gap-M svelte-4lnozm c0c157ac533e94fe7a15900bd7e58318a-dom" on:click={cancelEditing}>Close</button>
         </div>
       </div>
     {:else}
       <!-- List of journeys -->
       <div class="filter-sort-container">
         <input type="text" bind:value={journeyFilter} placeholder="Search journeys..." class="filter-input" />
-        <button on:click={() => journeySortOrder = toggleSortOrder(journeySortOrder)} class="sort-button">
-          Sort {journeySortOrder === 'asc' ? '↑' : '↓'}
-        </button>
       </div>
       {#if filterJourneys(journeyData, journeyFilter).length > 0}
         <ul class="journey-list">
@@ -736,7 +778,7 @@ const reloadData = async () => {
               {#if journey.journey_item && journey.journey_item.length > 0}
                 <h4>Journey Items:</h4>
                 <ul class="journey-items">
-                  {#each journey.journey_item.sort(sortByRanking) as journeyItem (journeyItem._id)}
+                  {#each journey.journey_item.sort(sortByRankingAscending) as journeyItem (journeyItem._id)}
                     <li class="journey-item">
                       <span class="item-title">{journeyItem.title || journeyItem.primaryDisplay}</span>
                     </li>
@@ -745,7 +787,7 @@ const reloadData = async () => {
               {/if}
               <div class="journey-actions">
                 <button class="spectrum-Button spectrum-Button--sizeM spectrum-Button--cta gap-M svelte-4lnozm c454061e78c2a4775a343d673e7a8fb04-TdiW38gAi8-dom" on:click={() => startEditing(journey.id)}>Edit</button>
-                <button class="spectrum-Button spectrum-Button--sizeM spectrum-Button--cta gap-M svelte-4lnozm c454061e78c2a4775a343d673e7a8fb04-TdiW38gAi8-dom" on:click={() => openDeleteConfirm(journey)}>Delete</button>
+                <button class="spectrum-Button spectrum-Button--warning spectrum-Button--sizeM" on:click={() => openDeleteConfirm(journey)}>Delete</button>
               </div>
             </li>
           {/each}
@@ -767,19 +809,37 @@ const reloadData = async () => {
       <input type="number" bind:value={newJourneyItem.ranking} placeholder="Sorting" class="edit-input" min="0" step="1" />
       <div class="overlay-actions">
         <button class="spectrum-Button spectrum-Button--sizeM spectrum-Button--primary gap-M svelte-4lnozm c0c157ac533e94fe7a15900bd7e58318a-dom" on:click={saveNewJourneyItem}>Save</button>
-        <button class="spectrum-Button spectrum-Button--sizeM spectrum-Button--primary gap-M svelte-4lnozm c0c157ac533e94fe7a15900bd7e58318a-dom" on:click={closeNewItemOverlay}>Cancel</button>
+        <button class="spectrum-Button spectrum-Button--sizeM spectrum-Button--primary gap-M svelte-4lnozm c0c157ac533e94fe7a15900bd7e58318a-dom" on:click={closeNewItemOverlay}>Close</button>
       </div>
     </div>
   </div>
 {/if}
 
-{#if showDeleteConfirmitem}
-  <div class="delete-confirm-modal">
-    <p>Are you sure you want to delete this journey item?</p>
-    <button on:click={() => deleteJourneyItem(itemToDelete)}>Yes, Delete</button>
-    <button on:click={closeDeleteConfirmitem}>Cancel</button>
+{#if showSuccessModal}
+  <div class="success-modal">
+    <div class="modal-content">
+      <p>{successMessage}</p>
+      <button class="spectrum-Button spectrum-Button--sizeM spectrum-Button--primary gap-M svelte-4lnozm c0c157ac533e94fe7a15900bd7e58318a-dom" on:click={closeSuccessModal}>OK</button>
+    </div>
   </div>
 {/if}
+
+{#if showSuccessModal}
+  <div class="modal-overlay">
+    <div class="modal-content">
+      <p>{successMessage}</p>
+      <button class="spectrum-Button spectrum-Button--sizeM spectrum-Button--primary gap-M svelte-4lnozm c0c157ac533e94fe7a15900bd7e58318a-dom" on:click={closeSuccessModal}>OK</button>
+    </div>
+  </div>
+{/if}
+
+  {#if showDeleteConfirmitem}
+    <div class="delete-confirm-modal">
+      <p>Are you sure you want to delete this journey item?</p>
+      <button on:click={() => deleteJourneyItem(itemToDelete)}>Yes, Delete</button>
+      <button on:click={closeDeleteConfirmitem}>Cancel</button>
+    </div>
+  {/if}
 
       {#if showDeleteConfirm}
       <div class="delete-confirm-modal">
@@ -857,7 +917,7 @@ const reloadData = async () => {
 #journeysDiv
  {
   background-color: #fff;
-  border-radius: 12px;
+  border-radius: 6px;
   padding: 20px;
   margin-bottom: 20px;
 }
@@ -881,21 +941,21 @@ h2 {
 /* Journey Items List */
 .journey-list,
 .journey-items-list {
-  list-style: none;
+  list-style-type: none;
   padding: 0;
   margin: 0;
 }
 
 .journey-item {
   padding: 20px;
-  border-radius: 12px;
+  list-style-type: none;
+  border-radius: 6px;
   border: 1px solid #ddd;
   margin-bottom: 20px;
   background-color: #fafafa;
 }
 
-.journey-item:hover {
-}
+
 
 .journey-header h3 {
   font-size: 1.6em;
@@ -988,6 +1048,12 @@ h2 {
   margin-top: 1em;
 }
 
+.red-button {
+    background-color: red;
+    border-color: red;
+    color: white; /* Ensure the text is readable */
+}
+
 .journey-actions button,
 .journey-item-actions button {
   padding: 6px 20px;
@@ -1011,6 +1077,26 @@ h2 {
 .delete-confirm-modal button {
   margin: 10px;
   border-radius: 20px;
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background-color: white;
+  padding: 20px;
+  border-radius: 5px;
+  text-align: center;
 }
 
 
