@@ -179,15 +179,16 @@ const loadJourneyItems = async () => {
     // Journey CRUD Functions
 
     const startCreatingNewJourney = () => {
-    creatingNewJourney = true;
-    currentEditingJourney = {
-      title: '',
-      description: '',
-      journey_item: []
+      creatingNewJourney = true;
+      currentEditingJourney = {
+        id: null,  // Explicitly set to null for new journeys
+        title: '',
+        description: '',
+        journey_item: []
+      };
     };
-  };
 
-const saveJourney = async () => {
+    const saveJourney = async () => {
   try {
     // Validation
     if (!currentEditingJourney.title || currentEditingJourney.title.trim() === '') {
@@ -203,17 +204,22 @@ const saveJourney = async () => {
     // Prepare the journey object
     const preparedJourney = {
       ...currentEditingJourney,
-      journey_item: currentEditingJourney.journey_item.filter(item => !item.isNew).map(item => ({ _id: item.id })),
-      id: currentEditingJourney.id
+      journey_item: Array.isArray(currentEditingJourney.journey_item)
+        ? currentEditingJourney.journey_item
+            .filter(item => !item.isNew)
+            .map(item => ({ _id: item.id }))
+        : [],
+        id: currentEditingJourney.id
     };
 
-    // Save journey in the database
+    // Save journey (this will update if id exists, or create new if it doesn't)
     const journeyResult = await API.saveRow({
       tableId: journeyTableId,
       ...preparedJourney
     });
-  // Update existing journey items and create new ones
-  const itemUpdatePromises = currentEditingJourney.journey_item.map(async (item) => {
+
+    // Update existing journey items and create new ones
+    const itemUpdatePromises = currentEditingJourney.journey_item.map(async (item) => {
       const journeyItemData = {
         ...item,
         journey_id: journeyResult.id,
@@ -230,10 +236,9 @@ const saveJourney = async () => {
 
     showSuccess("Journey and all items updated successfully.");
 
-    // Maintain the editing state
+    // Update the current editing journey with the latest data
+    currentEditingJourney = { ...journeyResult, journey_item: updatedItems };
     editingId = journeyResult.id;
-    currentEditingJourney = { ...currentEditingJourney, id: journeyResult.id };
-    
 
     // Reload data
     await reloadData(editingId);
@@ -365,6 +370,9 @@ const startEditing = async (journeyId) => {
   if (journey) {
     // Create a deep copy to avoid unintended mutations
     currentEditingJourney = JSON.parse(JSON.stringify(journey));
+    currentEditingJourney.journey_item = Array.isArray(currentEditingJourney.journey_item)
+      ? currentEditingJourney.journey_item
+      : [];
 
     // Fetch full journey item details and update the currentEditingJourney.journey_item
     const itemsTableId = typeof dataTablejourneyitems.tableId === 'object' ? dataTablejourneyitems.tableId.id : dataTablejourneyitems.tableId;
@@ -463,7 +471,7 @@ const saveJourneyItem = async (item) => {
 
 
 
-  const deleteJourneyItem = async (item) => {
+const deleteJourneyItem = async (item) => {
     try {
       loading = true;
       error = null;
@@ -487,22 +495,20 @@ const saveJourneyItem = async (item) => {
         if (itemDeleteResult) {
           showSuccess("Journey item deleted successfully.");
 
-          await reloadData();
-          await tick();
-
           // Update local data
-        journeyData = journeyData.map(journey => ({
-          ...journey,
-          journey_item: journey.journey_item.filter(i => i.id !== item.id)
-        }));
+          allJourneyItems = allJourneyItems.filter(i => i.id !== item.id);
 
-        allJourneyItemsStore.update(items => items.filter(i => i.id !== item.id));
+          // Update the journeyData
+          journeyData = journeyData.map(journey => {
+            journey.journey_item
+            return {
+              ...journey,
+              journey_item: journey.journey_item ? journey.journey_item?.filter(i => i.id !== item.id) : []
+            }
+          });
 
-        // Force a re-render
-        refreshDisplay();
-
-        // Use tick again to ensure the display has updated
-        await tick();
+          // Force a re-render
+          refreshDisplay();
 
           closeDeleteConfirmitem();
         } else {
@@ -733,7 +739,7 @@ onMount(() => {
         <h2>Journeys</h2>
         <button class="spectrum-Button spectrum-Button--sizeM spectrum-Button--primary gap-M svelte-4lnozm c0c157ac533e94fe7a15900bd7e58318a-dom" on:click={startCreatingNewJourney}>Create New Journey</button>
         </div>
-    {#if currentEditingJourney}
+     {#if currentEditingJourney && currentEditingJourney.journey_item}  
       <!-- Editing view for the specific journey -->
       <div class="journey-edit">
         <input type="text" bind:value={currentEditingJourney.title} placeholder="Title" class="edit-input" />
@@ -742,7 +748,7 @@ onMount(() => {
           <button class="spectrum-Button spectrum-Button--sizeM spectrum-Button--primary gap-M svelte-4lnozm c0c157ac533e94fe7a15900bd7e58318a-dom" on:click={addNewJourneyItem}>Add New Item</button>
          
         <ul class="journey-items-list">
-          {#each currentEditingJourney.journey_item.sort(sortByRankingAscending) as item (item.id || item.ranking)}
+          {#each (currentEditingJourney.journey_item || []).sort(sortByRankingAscending) as item (item.id || item.ranking)}
           <li class="journey-item">
               <div class="journey-item-container">
                 <div class="journey-item-media">
@@ -850,16 +856,16 @@ onMount(() => {
   {#if showDeleteConfirmitem}
     <div class="delete-confirm-modal">
       <p>Are you sure you want to delete this journey item?</p>
-      <button on:click={() => deleteJourneyItem(itemToDelete)}>Yes, Delete</button>
-      <button on:click={closeDeleteConfirmitem}>Cancel</button>
+      <button class="spectrum-Button spectrum-Button--warning spectrum-Button--sizeM" on:click={() => deleteJourneyItem(itemToDelete)}>Yes, Delete</button>
+      <button class="spectrum-Button spectrum-Button--sizeM spectrum-Button--primary gap-M svelte-4lnozm c0c157ac533e94fe7a15900bd7e58318a-dom" on:click={closeDeleteConfirmitem}>Cancel</button>
     </div>
   {/if}
 
       {#if showDeleteConfirm}
       <div class="delete-confirm-modal">
         <p>Are you sure you want to delete this journey?</p>
-        <button on:click={() => deleteJourney(journeyToDelete)}>Yes, Delete</button>
-        <button on:click={closeDeleteConfirm}>Cancel</button>
+        <button class="spectrum-Button spectrum-Button--warning spectrum-Button--sizeM" on:click={() => deleteJourney(journeyToDelete)}>Yes, Delete</button>
+        <button class="spectrum-Button spectrum-Button--sizeM spectrum-Button--primary gap-M svelte-4lnozm c0c157ac533e94fe7a15900bd7e58318a-dom" on:click={closeDeleteConfirm}>Cancel</button>
       </div>
     {/if}
   {/if}
@@ -1086,6 +1092,8 @@ h2 {
   padding: 30px;
   border-radius: 12px;
   z-index: 1000;
+  border: 2px solid #ccc; 
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); 
 }
 
 .delete-confirm-modal button {
